@@ -31,7 +31,7 @@ class TwoTowerConfig:
 class TwoTower(nn.Module):
     def __init__(self, n_bundles, bundle_part, dim=64):
         super().__init__()
-        self.register_buffer("bundle_part", torch.as_tensor(bundle_part, dtype=torch.long))
+        self.register_buffer("bundle_part", torch.tensor(np.array(bundle_part), dtype=torch.long))
         self.item_emb = nn.Embedding(n_bundles + 1, dim, padding_idx=0)
         self.part_emb = nn.Embedding(N_PARTS + 1, dim, padding_idx=0)
         self.accuracy_emb = nn.Embedding(ACCURACY_BUCKETS, dim, padding_idx=0)

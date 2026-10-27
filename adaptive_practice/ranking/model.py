@@ -304,7 +304,7 @@ def model_part(model, questions):
 
 
 def attach_question_parts(model, question_part):
-    model.register_buffer("question_part", torch.as_tensor(question_part, dtype=torch.long))
+    model.register_buffer("question_part", torch.tensor(np.array(question_part), dtype=torch.long))
     return model
 
 
