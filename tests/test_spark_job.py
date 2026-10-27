@@ -34,7 +34,7 @@ def reference(train):
                 cont = int(session[i + 1] == session[i])
                 elapsed = g.loc[g.timestamp == stamps[i + 1], "prior_question_elapsed_time"].iloc[0]
             else:
-                cont, elapsed = None, np.nan
+                cont, elapsed = 0, np.nan
             rows.append({
                 "user_id": user,
                 "timestamp": ts,
@@ -68,9 +68,8 @@ def test_history_features_are_leak_free(built):
 def test_labels_look_ahead_one_container(built):
     train, features = built
     merged = features.merge(reference(train), on=["user_id", "timestamp"])
-    known = merged.ref_label_continue.notna()
-    assert (merged.label_continue[known] == merged.ref_label_continue[known]).all()
-    assert merged.label_continue[~known].isna().all()
+    assert merged.label_continue.notna().all()
+    assert (merged.label_continue == merged.ref_label_continue).all()
     both = merged.ref_label_elapsed.notna()
     assert np.allclose(merged.label_elapsed[both], merged.ref_label_elapsed[both])
 

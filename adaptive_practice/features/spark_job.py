@@ -91,8 +91,7 @@ def containers(q):
         .withColumn("next_session", F.lead("session_index").over(nxt))
         .withColumn(
             "label_continue",
-            F.when(F.col("next_session").isNull(), F.lit(None).cast("int"))
-            .when(F.col("next_session") == F.col("session_index"), 1)
+            F.when(F.col("next_session") == F.col("session_index"), 1)
             .otherwise(0),
         )
         .withColumn("lag_ms", F.coalesce(F.col("lag_ms"), F.lit(-1)))
