@@ -101,3 +101,49 @@ def bundle_questions(features_dir, n_bundles):
     for q, b in zip(questions["content_id"].to_numpy(), questions["bundle_idx"].to_numpy()):
         members[int(b)].append(int(q) + 1)
     return [np.array(sorted(m), dtype=np.int64) for m in members]
+
+
+@dataclass
+class Containers:
+    offsets: np.ndarray
+    user_index: np.ndarray
+    bundle: np.ndarray
+    part: np.ndarray
+    accuracy: np.ndarray
+    log_elapsed: np.ndarray
+    lag: np.ndarray
+    position: np.ndarray
+    cont: np.ndarray
+    propensity: np.ndarray
+    first_row: np.ndarray
+
+    def __len__(self):
+        return len(self.bundle)
+
+    def user_start(self, idx):
+        return self.offsets[self.user_index[idx]]
+
+
+def containers(seq):
+    user_of_row = np.repeat(np.arange(seq.n_users), np.diff(seq.offsets))
+    key = user_of_row * (seq.container.max() + 1) + seq.container
+    boundary = np.r_[True, key[1:] != key[:-1]]
+    first = np.flatnonzero(boundary)
+    group = np.cumsum(boundary) - 1
+    size = np.bincount(group)
+    accuracy = np.bincount(group, weights=seq.correct) / size
+    user_index = user_of_row[first]
+    counts = np.bincount(user_index, minlength=seq.n_users)
+    return Containers(
+        offsets=np.r_[0, np.cumsum(counts)].astype(np.int64),
+        user_index=user_index,
+        bundle=seq.bundle[first],
+        part=seq.part[first],
+        accuracy=accuracy,
+        log_elapsed=seq.log_elapsed[first],
+        lag=seq.lag[first],
+        position=seq.position[first],
+        cont=seq.cont[first],
+        propensity=seq.propensity[first],
+        first_row=first,
+    )
