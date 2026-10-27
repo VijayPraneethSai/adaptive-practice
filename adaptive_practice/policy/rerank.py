@@ -3,7 +3,10 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+from adaptive_practice.features import sequences
+from adaptive_practice.ranking import model as ranking
 from adaptive_practice.ranking.model import score_candidates
+from adaptive_practice.retrieval import two_tower
 from adaptive_practice.retrieval.two_tower import encode, item_matrix
 
 
@@ -123,3 +126,11 @@ class Engine:
         if rng.random() < self.epsilon:
             return int(rng.integers(self.n_bundles))
         return int(decision.candidates[rng.choice(len(decision.candidates), p=decision.probs)])
+
+
+def load_engine(run_dir, features_dir, dev, **kwargs):
+    bundles = sequences.load_bundles(features_dir)
+    retriever, rcfg = two_tower.load_model(run_dir, len(bundles), bundles["part"].to_numpy(), dev)
+    ranker, _ = ranking.load_model(run_dir, features_dir, dev)
+    table = sequences.question_table(features_dir)
+    return Engine(retriever, rcfg, ranker, table, sequences.bundle_questions(features_dir, len(bundles)), dev=dev, **kwargs)
