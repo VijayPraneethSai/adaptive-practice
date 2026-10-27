@@ -6,12 +6,22 @@ import pandas as pd
 
 COLUMNS = [
     "user_id", "timestamp", "row_id", "content_id", "bundle_idx", "part", "container_seq", "session_position",
-    "lag_ms", "prior_explained", "label_correct", "label_elapsed", "label_continue", "propensity",
+    "lag_ms", "prior_explained", "tag", "session_index", "q_accuracy", "q_attempts", "q_mean_elapsed",
+    "prior_attempts", "prior_accuracy", "prior_part_attempts", "prior_part_accuracy", "prior_tag_attempts",
+    "prior_tag_accuracy", "session_prior_attempts", "session_prior_accuracy", "label_correct", "label_elapsed", "label_continue", "propensity",
 ]
 
 LAG_BUCKETS = 32
 ELAPSED_BUCKETS = 64
 POSITION_BUCKETS = 64
+DENSE_FEATURES = 11
+
+
+def dense_features(q_accuracy, q_attempts, q_mean_elapsed, prior, part, tag, session):
+    cols = [np.asarray(q_accuracy, dtype=np.float64), np.log1p(q_attempts), np.log1p(np.asarray(q_mean_elapsed) / 1000.0)]
+    for attempts, accuracy in (prior, part, tag, session):
+        cols += [np.asarray(accuracy, dtype=np.float64), np.log1p(attempts)]
+    return np.stack(cols, axis=-1).astype(np.float32)
 
 
 def lag_bucket(lag_ms):
@@ -47,6 +57,9 @@ class Sequences:
     log_elapsed: np.ndarray
     cont: np.ndarray
     propensity: np.ndarray
+    tag: np.ndarray = None
+    session: np.ndarray = None
+    dense: np.ndarray = None
 
     @property
     def n_users(self):
@@ -78,6 +91,15 @@ def from_frame(df):
         log_elapsed=np.log1p(np.nan_to_num(elapsed, nan=0.0) / 1000.0),
         cont=np.nan_to_num(cont, nan=-1.0).astype(np.int64),
         propensity=propensity,
+        tag=df["tag"].to_numpy(dtype=np.int64) if "tag" in df else None,
+        session=df["session_index"].to_numpy(dtype=np.int64) if "session_index" in df else None,
+        dense=dense_features(
+            df["q_accuracy"], df["q_attempts"], df["q_mean_elapsed"],
+            (df["prior_attempts"], df["prior_accuracy"]),
+            (df["prior_part_attempts"], df["prior_part_accuracy"]),
+            (df["prior_tag_attempts"], df["prior_tag_accuracy"]),
+            (df["session_prior_attempts"], df["session_prior_accuracy"]),
+        ) if "q_accuracy" in df else None,
     )
 
 
@@ -93,6 +115,57 @@ def load_bundles(features_dir):
 
 def load_questions(features_dir):
     return pd.read_parquet(Path(features_dir) / "questions").sort_values("content_id").reset_index(drop=True)
+
+
+@dataclass
+class QuestionTable:
+    part: np.ndarray
+    tag: np.ndarray
+    accuracy: np.ndarray
+    attempts: np.ndarray
+    mean_elapsed: np.ndarray
+
+
+def question_table(features_dir):
+    q = load_questions(features_dir)
+    size = int(q["content_id"].max()) + 2
+    idx = q["content_id"].to_numpy() + 1
+    table = QuestionTable(*(np.zeros(size) for _ in range(5)))
+    table.part[idx] = q["part"].to_numpy()
+    table.tag[idx] = q["tag"].to_numpy()
+    table.accuracy[idx] = q["q_accuracy"].to_numpy()
+    table.attempts[idx] = q["q_attempts"].to_numpy()
+    table.mean_elapsed[idx] = q["q_mean_elapsed"].to_numpy()
+    table.part = table.part.astype(np.int64)
+    table.tag = table.tag.astype(np.int64)
+    return table
+
+
+def online_dense(seq, table, user, upto, questions):
+    lo = seq.offsets[user]
+    past_correct = seq.correct[lo:upto]
+    past_part = seq.part[lo:upto]
+    past_tag = seq.tag[lo:upto]
+    session = seq.session[upto] if upto < seq.offsets[user + 1] else None
+    in_session = (seq.session[lo:upto] == session) if session is not None else np.zeros(upto - lo, dtype=bool)
+    q = np.asarray(questions)
+    part = table.part[q]
+    tag = table.tag[q]
+    part_n = np.array([np.sum(past_part == p) for p in part])
+    part_h = np.array([np.sum(past_correct[past_part == p]) for p in part])
+    tag_n = np.array([np.sum(past_tag == t) for t in tag])
+    tag_h = np.array([np.sum(past_correct[past_tag == t]) for t in tag])
+    n, h = len(past_correct), past_correct.sum()
+    s_n, s_h = in_session.sum(), past_correct[in_session].sum()
+    ones = np.ones(len(q))
+    acc = lambda hits, attempts: (hits + 1.0) / (attempts + 2.0)
+    return dense_features(
+        table.accuracy[q], table.attempts[q], table.mean_elapsed[q],
+        (n * ones, acc(h, n) * ones),
+        (part_n, acc(part_h, part_n)),
+        (tag_n, acc(tag_h, tag_n)),
+        (s_n * ones, acc(s_h, s_n) * ones),
+    )
 
 
 def bundle_questions(features_dir, n_bundles):

@@ -148,6 +148,8 @@ def build_features(train, questions):
     )
     global_acc = q.filter(F.col("split") == "train").agg(F.avg("label_correct")).first()[0] or 0.5
     global_elapsed = q.filter(F.col("split") == "train").agg(F.avg("label_elapsed")).first()[0] or 20000.0
+    defaults = {"q_accuracy": float(global_acc), "q_mean_elapsed": float(global_elapsed), "q_attempts": 0}
+    qmeta = qmeta.join(stats, "content_id", "left").fillna(defaults)
     q = (
         q.join(stats, "content_id", "left")
         .fillna({"q_accuracy": float(global_acc), "q_mean_elapsed": float(global_elapsed), "q_attempts": 0})
