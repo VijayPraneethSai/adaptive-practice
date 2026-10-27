@@ -109,6 +109,11 @@ def load(features_dir, split):
     return from_frame(df)
 
 
+def load_all(features_dir):
+    path = Path(features_dir) / "interactions"
+    return from_frame(pd.read_parquet(path, columns=COLUMNS))
+
+
 def load_bundles(features_dir):
     return pd.read_parquet(Path(features_dir) / "bundles").sort_values("bundle_idx").reset_index(drop=True)
 
