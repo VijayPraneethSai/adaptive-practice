@@ -8,10 +8,12 @@ from adaptive_practice.data.schema import TRAIN_DTYPES
 from adaptive_practice.simulator import AppPolicy, Simulator, make_bank, simulate_user
 
 
-def generate(n_users, n_questions=2000, seed=0, max_bundles=300):
+def generate(n_users, n_questions=2000, seed=0, max_bundles=300, bank=None, observers=(), lecture_rate=None):
     rng = np.random.default_rng(seed)
-    bank = make_bank(n_questions, rng)
+    bank = bank if bank is not None else make_bank(n_questions, rng)
     sim = Simulator(bank)
+    if lecture_rate is not None:
+        sim.params.lecture_rate = lecture_rate
     policy = AppPolicy(bank)
     rows = []
     lecture_ids = bank.lectures["lecture_id"].to_numpy()
@@ -19,9 +21,13 @@ def generate(n_users, n_questions=2000, seed=0, max_bundles=300):
 
     for user_id in range(n_users):
         student = sim.new_student(rng)
+        for obs in observers:
+            obs.start_user(user_id, sim, student)
         state = {"container": 0, "prev_elapsed": np.nan, "prev_explained": None}
 
         def on_event(log, bundle, propensity, correct, elapsed, p, clock):
+            for obs in observers:
+                obs.on_event(log, bundle, propensity, correct, elapsed, p, clock)
             ts = int(clock)
             if rng.random() < sim.params.lecture_rate:
                 rows.append((ts, user_id, int(rng.choice(lecture_ids)), 1, state["container"], -1, -1, np.nan, None, np.nan))
@@ -35,7 +41,11 @@ def generate(n_users, n_questions=2000, seed=0, max_bundles=300):
             state["prev_elapsed"] = float(np.mean(elapsed))
             state["prev_explained"] = bool(rng.random() < 0.9)
 
-        simulate_user(sim, policy, student, rng, max_bundles=max_bundles, on_event=on_event)
+        def on_decision(log, student):
+            for obs in observers:
+                obs.on_decision(log, student)
+
+        simulate_user(sim, policy, student, rng, max_bundles=max_bundles, on_event=on_event, on_decision=on_decision)
 
     train = pd.DataFrame(rows, columns=[
         "timestamp", "user_id", "content_id", "content_type_id", "task_container_id", "user_answer",

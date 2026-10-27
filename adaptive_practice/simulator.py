@@ -28,6 +28,39 @@ class Bank:
         return len(self.bundle_ids)
 
 
+def bank_from_tables(bundles_df, questions_df, rng, n_lectures=60):
+    bundles_df = bundles_df.sort_values("bundle_idx")
+    questions_df = questions_df.sort_values("content_id")
+    n_questions = int(questions_df["content_id"].max()) + 1
+    difficulty = np.zeros(n_questions)
+    correct_answer = np.zeros(n_questions, dtype=np.int64)
+    part_of = np.zeros(n_questions, dtype=np.int64)
+    tag_of = np.zeros(n_questions, dtype=np.int64)
+    bundle_of = np.zeros(n_questions, dtype=np.int64)
+    for row in questions_df.itertuples():
+        q = int(row.content_id)
+        part_of[q] = int(row.part)
+        tag_of[q] = int(row.tag)
+        bundle_of[q] = int(row.bundle_id)
+        difficulty[q] = rng.normal(0.0, 1.0) + 0.15 * (int(row.part) - 4) + rng.normal(0.0, 0.35)
+        correct_answer[q] = int(rng.integers(0, 4))
+    questions = pd.DataFrame({
+        "question_id": np.arange(n_questions), "bundle_id": bundle_of, "correct_answer": correct_answer,
+        "part": part_of, "tags": [str(t) for t in tag_of],
+    })
+    lectures = pd.DataFrame({
+        "lecture_id": np.arange(n_lectures) + 30000,
+        "tag": rng.integers(1, N_TAGS + 1, size=n_lectures),
+        "part": rng.integers(1, N_PARTS + 1, size=n_lectures),
+        "type_of": rng.choice(["concept", "solving question", "intention"], size=n_lectures),
+    })
+    bundle_ids = bundles_df["bundle_id"].to_numpy()
+    bundle_questions = [np.sort(questions_df.loc[questions_df.bundle_id == b, "content_id"].to_numpy()) for b in bundle_ids]
+    bundle_part = bundles_df["part"].to_numpy()
+    bundle_difficulty = np.array([difficulty[q].mean() if len(q) else 0.0 for q in bundle_questions])
+    return Bank(questions, lectures, difficulty, bundle_ids, bundle_questions, bundle_part, bundle_difficulty)
+
+
 def make_bank(n_questions, rng, n_lectures=60):
     rows = []
     difficulty = []
@@ -93,6 +126,8 @@ class UserLog:
     timestamps: list = field(default_factory=list)
     session_position: int = 0
     session_index: int = 0
+    now: float = 0.0
+    recent: list = field(default_factory=list)
     attempts: np.ndarray = field(default_factory=lambda: np.zeros(N_PARTS))
     hits: np.ndarray = field(default_factory=lambda: np.zeros(N_PARTS))
 
@@ -198,7 +233,7 @@ class AppPolicy:
         return bundle, self.propensity(log, bundle)
 
 
-def simulate_user(sim, policy, student, rng, max_bundles=300, max_sessions=30, on_event=None):
+def simulate_user(sim, policy, student, rng, max_bundles=300, max_sessions=30, on_event=None, on_decision=None):
     log = UserLog()
     clock = 0.0
     total_correct = 0
@@ -207,8 +242,11 @@ def simulate_user(sim, policy, student, rng, max_bundles=300, max_sessions=30, o
         log.session_position = 0
         session_hits = 0
         session_questions = 0
-        recent = []
+        log.recent = []
         while len(log.bundles) < max_bundles:
+            log.now = clock
+            if on_decision is not None:
+                on_decision(log, student)
             bundle, propensity = policy.choose(log, rng)
             correct, elapsed, p = sim.attempt(student, bundle, rng)
             part = sim.bank.bundle_part[bundle] - 1
@@ -222,10 +260,10 @@ def simulate_user(sim, policy, student, rng, max_bundles=300, max_sessions=30, o
             log.hits[part] += correct.sum()
             session_hits += int(correct.sum())
             session_questions += len(correct)
-            recent = (recent + correct.tolist())[-6:]
+            log.recent = (log.recent + correct.tolist())[-6:]
             clock += float(elapsed.sum()) + rng.uniform(3_000, 20_000)
             log.session_position += 1
-            keep = rng.random() < sim.continue_prob(student, log.session_position, float(np.mean(recent)), float(p.mean()))
+            keep = rng.random() < sim.continue_prob(student, log.session_position, float(np.mean(log.recent)), float(p.mean()))
             if not keep:
                 break
         total_correct += session_hits
